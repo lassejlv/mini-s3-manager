@@ -44,7 +44,14 @@ app.delete('/files/:key', async (c) => {
 
 app.post('/files/:key/presign', async (c) => {
   const key = c.req.param('key')
-  const url = s3.presign(key)
+  const body = await c.req.parseBody()
+  const expiresIn = Number(body['expiresIn']) || 3600 // Default 1 hour
+
+  // Max 7 days (604800 seconds)
+  const maxExpires = 604800
+  const finalExpires = Math.min(expiresIn, maxExpires)
+
+  const url = s3.presign(key, { expiresIn: finalExpires })
   return c.json({ success: true, url })
 })
 

@@ -1,6 +1,8 @@
 import { HeadContent, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
+import { Toaster } from '@/components/ui/sonner'
+import { ThemeProvider } from '@/components/theme-provider'
 
 import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
 
@@ -39,25 +41,28 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang='en'>
+    <html lang='en' suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
-        {children}
-        <TanStackDevtools
-          config={{
-            position: 'bottom-right',
-          }}
-          plugins={[
-            {
-              name: 'Tanstack Router',
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-            TanStackQueryDevtools,
-          ]}
-        />
-        <Scripts />
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          {children}
+          <Toaster />
+          <TanStackDevtools
+            config={{
+              position: 'bottom-right',
+            }}
+            plugins={[
+              {
+                name: 'Tanstack Router',
+                render: <TanStackRouterDevtoolsPanel />,
+              },
+              TanStackQueryDevtools,
+            ]}
+          />
+          <Scripts />
+        </ThemeProvider>
       </body>
     </html>
   )

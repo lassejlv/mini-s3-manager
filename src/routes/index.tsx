@@ -20,9 +20,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import { Label } from '@/components/ui/label'
-import { Folder, File as FileIcon, Trash2, Upload, RefreshCw, Home, Copy, Eye, EyeOff } from 'lucide-react'
+import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
+import { Folder, File as FileIcon, Trash2, Upload, RefreshCw, Home, Copy, Eye, EyeOff, Link as LinkIcon } from 'lucide-react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ModeToggle } from '@/components/mode-toggle'
 
 export const Route = createFileRoute('/')({
   component: S3Manager,
@@ -41,6 +44,22 @@ function S3Manager() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [targetFolder, setTargetFolder] = useState(path)
+  const [presignedUrl, setPresignedUrl] = useState<string | null>(null)
+  const [presignDialogOpen, setPresignDialogOpen] = useState(false)
+  const [selectedFileForPresign, setSelectedFileForPresign] = useState<string | null>(null)
+  const [presignDuration, setPresignDuration] = useState('3600') // 1 hour default
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        setSearchOpen((open) => !open)
+      }
+    }
+    document.addEventListener('keydown', down)
+    return () => document.removeEventListener('keydown', down)
+  }, [])
 
   const {
     data: files,
@@ -100,6 +119,39 @@ function S3Manager() {
     },
   })
 
+  const presignMutation = useMutation({
+    mutationFn: async ({ key, expiresIn }: { key: string; expiresIn: string }) => {
+      const formData = new FormData()
+      formData.append('expiresIn', expiresIn)
+
+      const res = await fetch(`/api/files/${encodeURIComponent(key)}/presign`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (!res.ok) throw new Error('Failed to generate presigned URL')
+      return res.json()
+    },
+    onSuccess: (data) => {
+      setPresignedUrl(data.url)
+      copyToClipboard(data.url, 'Presigned URL')
+    },
+    onError: () => {
+      toast.error('Failed to generate presigned URL')
+    },
+  })
+
+  const handlePresignSubmit = () => {
+    if (!selectedFileForPresign) return
+    presignMutation.mutate({ key: selectedFileForPresign, expiresIn: presignDuration })
+  }
+
+  const handleOpenPresignDialog = (key: string) => {
+    setSelectedFileForPresign(key)
+    setPresignDialogOpen(true)
+    setPresignedUrl(null)
+    setPresignDuration('3600')
+  }
+
   const handleUploadSubmit = () => {
     if (!selectedFile) return
     setUploading(true)
@@ -151,6 +203,12 @@ function S3Manager() {
     setTargetFolder(newPath)
   }
 
+  // Flatten all files for search
+  const searchableFiles = allFiles.map((file: any) => ({
+    ...file,
+    isFile: true,
+  }))
+
   const { data: config, isLoading: configLoading } = useQuery({
     queryKey: ['config'],
     queryFn: async () => {
@@ -197,7 +255,10 @@ function S3Manager() {
           <Card>
             <CardHeader className='flex flex-row items-center justify-between'>
               <div>
-                <CardTitle>Mini S3 Manager</CardTitle>
+                <CardTitle className='flex items-center gap-2'>
+                  Mini S3 Manager
+                  <ModeToggle />
+                </CardTitle>
                 <CardDescription>
                   <Breadcrumb className='mt-2'>
                     <BreadcrumbList>
@@ -231,6 +292,72 @@ function S3Manager() {
                 </CardDescription>
               </div>
               <div className='flex gap-2 items-center'>
+                <Button variant='outline' className='w-full relative h-9 justify-start text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64' onClick={() => setSearchOpen(true)}>
+                  <span className='hidden lg:inline-flex'>Search files...</span>
+                  <span className='inline-flex lg:hidden'>Search...</span>
+                  <kbd className='pointer-events-none absolute right-1.5 top-1.5 hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex'>
+                    <span className='text-xs'>⌘</span>K
+                  </kbd>
+                </Button>
+
+                <Dialog
+                  open={presignDialogOpen}
+                  onOpenChange={(open) => {
+                    setPresignDialogOpen(open)
+                    if (!open) {
+                      setPresignedUrl(null)
+                      setSelectedFileForPresign(null)
+                    }
+                  }}
+                >
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Generate Presigned URL</DialogTitle>
+                      <DialogDescription>
+                        Create a temporary access link for <span className='font-mono bg-muted px-1 rounded'>{selectedFileForPresign}</span>
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    {!presignedUrl ? (
+                      <div className='grid gap-4 py-4'>
+                        <div className='grid gap-2'>
+                          <Label>Expiration Duration</Label>
+                          <Select value={presignDuration} onValueChange={setPresignDuration}>
+                            <SelectTrigger>
+                              <SelectValue placeholder='Select duration' />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='900'>15 Minutes</SelectItem>
+                              <SelectItem value='3600'>1 Hour</SelectItem>
+                              <SelectItem value='14400'>4 Hours</SelectItem>
+                              <SelectItem value='86400'>1 Day</SelectItem>
+                              <SelectItem value='259200'>3 Days</SelectItem>
+                              <SelectItem value='604800'>7 Days</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <DialogFooter>
+                          <Button onClick={handlePresignSubmit} disabled={presignMutation.isPending}>
+                            {presignMutation.isPending ? 'Generating...' : 'Generate URL'}
+                          </Button>
+                        </DialogFooter>
+                      </div>
+                    ) : (
+                      <>
+                        <div className='flex items-center space-x-2 my-4'>
+                          <Input value={presignedUrl} readOnly />
+                          <Button size='icon' onClick={() => copyToClipboard(presignedUrl, 'URL')}>
+                            <Copy className='h-4 w-4' />
+                          </Button>
+                        </div>
+                        <DialogFooter>
+                          <Button onClick={() => setPresignDialogOpen(false)}>Close</Button>
+                        </DialogFooter>
+                      </>
+                    )}
+                  </DialogContent>
+                </Dialog>
+
                 <Button variant='outline' size='icon' onClick={() => refetch()} disabled={isLoading}>
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </Button>
@@ -296,35 +423,49 @@ function S3Manager() {
                         <TableCell>{item.isFolder ? '-' : item.lastModified ? new Date(item.lastModified).toLocaleString() : '-'}</TableCell>
                         <TableCell className='text-right'>
                           {!item.isFolder && (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  variant='ghost'
-                                  size='icon'
-                                  className='text-red-500 hover:text-red-700 hover:bg-red-50'
-                                  disabled={deleteMutation.isPending}
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <Trash2 className='h-4 w-4' />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This action cannot be undone. This will permanently delete the file
-                                    <span className='font-mono bg-muted px-1 rounded mx-1 text-foreground'>{item.key}</span>
-                                    from your S3 bucket.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => deleteMutation.mutate(item.key)} className='bg-red-500 hover:bg-red-700'>
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                            <div className='flex justify-end gap-2'>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleOpenPresignDialog(item.key)
+                                }}
+                                disabled={presignMutation.isPending}
+                                title='Get Presigned URL'
+                              >
+                                <LinkIcon className='h-4 w-4 text-gray-500' />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='text-red-500 hover:text-red-700 hover:bg-red-50'
+                                    disabled={deleteMutation.isPending}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <Trash2 className='h-4 w-4' />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This action cannot be undone. This will permanently delete the file
+                                      <span className='font-mono bg-muted px-1 rounded mx-1 text-foreground'>{item.key}</span>
+                                      from your S3 bucket.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => deleteMutation.mutate(item.key)} className='bg-red-500 hover:bg-red-700'>
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
                           )}
                         </TableCell>
                       </TableRow>
@@ -360,6 +501,27 @@ function S3Manager() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <CommandInput placeholder='Type a command or search...' />
+        <CommandList>
+          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandGroup heading='Files'>
+            {searchableFiles.map((file: any) => (
+              <CommandItem
+                key={file.key}
+                onSelect={() => {
+                  presignMutation.mutate({ key: file.key, expiresIn: '3600' })
+                  setSearchOpen(false)
+                }}
+              >
+                <FileIcon className='mr-2 h-4 w-4' />
+                <span>{file.key}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
     </div>
   )
 }

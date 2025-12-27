@@ -1,0 +1,7 @@
+node_modules
+.output
+.git
+*.md
+.vscode
+.idea
+
